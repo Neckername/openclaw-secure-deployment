@@ -8,7 +8,7 @@ This repository keeps OpenClaw out of the host environment. The baseline deploym
 - Gateway ports are published to `127.0.0.1` by default.
 - The gateway and CLI run as uid `1000`, with `cap_drop: ALL`, `no-new-privileges`, read-only root filesystem, `tmpfs` for writable scratch paths, and CPU, memory, and process limits.
 - The host Docker socket is not mounted into the gateway in the default deployment.
-- The optional sandbox overlay uses a private Docker-in-Docker sidecar so OpenClaw can create agent sandbox containers without receiving the host Docker socket.
+- The optional sandbox overlay uses a private Docker-in-Docker sidecar so OpenClaw can create agent sandbox containers without receiving the host Docker socket. The sidecar Docker API uses mutual TLS on `2376`, shares only client certificates with the gateway, and is reachable only on the private sandbox control network through the `docker` DNS alias used by Docker's generated TLS certificate.
 - The secure OpenClaw config enables the bundled Codex plugin, forces the Codex harness for `codex/*` models, sandboxes all agent tool execution, disables elevated exec, and denies automation, node-control, and messaging tools by default.
 - External OpenClaw plugin installation is disabled from chat commands by default. Install plugins deliberately from the CLI after review.
 
@@ -65,6 +65,8 @@ Open the local dashboard at `http://127.0.0.1:18789/`.
 
 This is the intended secure mode for Codex/OpenClaw agent work. It builds a gateway image with the Docker CLI and starts a private Docker-in-Docker sidecar for sandbox containers.
 
+The sandbox daemon intentionally remains `privileged: true` because Docker-in-Docker needs elevated kernel features inside Docker Desktop's Linux VM. Treat that as a residual blast-radius boundary, not perfect isolation. The daemon must not expose host ports, must not mount the host Docker socket, and must not be attached to the shared gateway network.
+
 ```powershell
 .\scripts\Install-OpenClawSecure.ps1 -WithSandbox
 ```
@@ -80,6 +82,14 @@ Verify effective sandboxing:
 ```powershell
 docker compose -f compose.yaml -f compose.sandbox-dind.yaml run --rm openclaw-cli sandbox explain --json
 ```
+
+Verify TLS Docker client access to the sidecar:
+
+```powershell
+docker compose -f compose.yaml -f compose.sandbox-dind.yaml run --rm --entrypoint docker openclaw-cli info
+```
+
+The Docker-in-Docker logs may still include benign startup messages about missing `/proc/net/ip6_tables_names`, missing `/proc/net/arp_tables_names`, unsupported snapshotters such as `aufs` or `zfs`, or tracing/NRI plugins being disabled. Those are expected in this containerized daemon. Warnings about unauthenticated access on `2375` are not expected; the TLS overlay fixes those by using authenticated `2376` instead of suppressing the warning.
 
 ## Plugin and Skill Access
 
@@ -107,6 +117,7 @@ Register a daily audit:
 ```
 
 The audit checks Compose validation, runtime hardening controls, whether the host Docker socket is mounted, health status, and Docker Scout or Trivy image CVEs when available.
+With `-UseSandboxOverlay`, the audit also checks that the DinD sidecar has no host port bindings, is not attached to `openclaw_internal`, avoids unauthenticated `2375`, and that the gateway Docker client uses TLS on `2376`.
 
 ## Source Notes
 

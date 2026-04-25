@@ -6,8 +6,15 @@ services:
   openclaw-gateway:
     image: ${OPENCLAW_SANDBOX_GATEWAY_IMAGE:-openclaw-gateway-secure:latest}
     environment:
-      DOCKER_HOST: tcp://openclaw-sandbox-docker:2375
+      DOCKER_HOST: tcp://docker:2376
+      DOCKER_TLS_VERIFY: "1"
+      DOCKER_CERT_PATH: /certs/client
       OPENCLAW_SANDBOX: "1"
+    volumes:
+      - type: volume
+        source: openclaw_sandbox_docker_certs
+        target: /certs/client
+        read_only: true
     depends_on:
       openclaw-sandbox-docker:
         condition: service_healthy
@@ -18,7 +25,14 @@ services:
   openclaw-cli:
     image: ${OPENCLAW_SANDBOX_GATEWAY_IMAGE:-openclaw-gateway-secure:latest}
     environment:
-      DOCKER_HOST: tcp://openclaw-sandbox-docker:2375
+      DOCKER_HOST: tcp://docker:2376
+      DOCKER_TLS_VERIFY: "1"
+      DOCKER_CERT_PATH: /certs/client
+    volumes:
+      - type: volume
+        source: openclaw_sandbox_docker_certs
+        target: /certs/client
+        read_only: true
 
   openclaw-sandbox-docker:
     image: docker:27-dind
@@ -29,10 +43,9 @@ services:
       - 1.1.1.1
       - 8.8.8.8
     environment:
-      DOCKER_TLS_CERTDIR: ""
+      DOCKER_TLS_CERTDIR: /certs
     command:
-      - dockerd-entrypoint.sh
-      - --host=tcp://0.0.0.0:2375
+      - --host=tcp://0.0.0.0:2376
       - --host=unix:///var/run/docker.sock
       - --icc=false
       - --userland-proxy=false
@@ -40,11 +53,13 @@ services:
       - --dns=8.8.8.8
     volumes:
       - openclaw_sandbox_docker:/var/lib/docker
+      - openclaw_sandbox_docker_certs:/certs/client
     networks:
-      - openclaw_internal
-      - openclaw_sandbox_control
+      openclaw_sandbox_control:
+        aliases:
+          - docker
     healthcheck:
-      test: ["CMD", "docker", "info"]
+      test: ["CMD-SHELL", "DOCKER_HOST=tcp://localhost:2376 DOCKER_TLS_VERIFY=1 DOCKER_CERT_PATH=/certs/client docker info"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -57,3 +72,4 @@ networks:
 
 volumes:
   openclaw_sandbox_docker:
+  openclaw_sandbox_docker_certs:
