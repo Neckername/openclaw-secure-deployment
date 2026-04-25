@@ -1,0 +1,116 @@
+name: openclaw-secure
+
+services:
+  openclaw-gateway:
+    image: ${OPENCLAW_IMAGE:-ghcr.io/phioranex/openclaw-docker:latest}
+    container_name: openclaw-gateway-secure
+    init: true
+    restart: unless-stopped
+    user: "1000:1000"
+    command:
+      - gateway
+      - --bind
+      - ${OPENCLAW_GATEWAY_BIND:-lan}
+      - --port
+      - "18789"
+      - --auth
+      - token
+      - --token
+      - ${OPENCLAW_GATEWAY_TOKEN:?set OPENCLAW_GATEWAY_TOKEN in .env}
+    environment:
+      HOME: /home/node
+      NODE_ENV: production
+      TERM: xterm-256color
+      TZ: ${OPENCLAW_TZ:-UTC}
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?set OPENCLAW_GATEWAY_TOKEN in .env}
+      OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ""
+      NPM_CONFIG_CACHE: /home/node/.npm
+    ports:
+      - "${OPENCLAW_GATEWAY_HOST:-127.0.0.1}:${OPENCLAW_GATEWAY_PORT:-18789}:18789"
+      - "${OPENCLAW_GATEWAY_HOST:-127.0.0.1}:${OPENCLAW_BRIDGE_PORT:-18790}:18790"
+    volumes:
+      - type: bind
+        source: ${OPENCLAW_CONFIG_DIR:-./runtime/config}
+        target: /home/node/.openclaw
+      - type: bind
+        source: ${OPENCLAW_WORKSPACE_DIR:-./runtime/workspace}
+        target: /home/node/.openclaw/workspace
+      - type: bind
+        source: ${OPENCLAW_CODEX_DIR:-./runtime/codex}
+        target: /home/node/.codex
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
+      - /home/node/.cache:rw,nosuid,nodev,uid=1000,gid=1000,size=512m
+      - /home/node/.npm:rw,exec,nosuid,nodev,uid=1000,gid=1000,size=512m
+      - /home/node/.openclaw/plugin-runtime-deps:rw,exec,nosuid,nodev,uid=1000,gid=1000,size=2g
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    mem_limit: 2g
+    cpus: 2.0
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "node /app/dist/index.js gateway health --token \"$OPENCLAW_GATEWAY_TOKEN\" >/dev/null 2>&1"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - openclaw_internal
+
+  openclaw-cli:
+    image: ${OPENCLAW_IMAGE:-ghcr.io/phioranex/openclaw-docker:latest}
+    profiles:
+      - cli
+    init: true
+    user: "1000:1000"
+    network_mode: "service:openclaw-gateway"
+    entrypoint:
+      - node
+      - /app/dist/index.js
+    environment:
+      HOME: /home/node
+      NODE_ENV: production
+      TERM: xterm-256color
+      TZ: ${OPENCLAW_TZ:-UTC}
+      BROWSER: echo
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?set OPENCLAW_GATEWAY_TOKEN in .env}
+      OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ""
+      NPM_CONFIG_CACHE: /home/node/.npm
+    volumes:
+      - type: bind
+        source: ${OPENCLAW_CONFIG_DIR:-./runtime/config}
+        target: /home/node/.openclaw
+      - type: bind
+        source: ${OPENCLAW_WORKSPACE_DIR:-./runtime/workspace}
+        target: /home/node/.openclaw/workspace
+      - type: bind
+        source: ${OPENCLAW_CODEX_DIR:-./runtime/codex}
+        target: /home/node/.codex
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
+      - /home/node/.cache:rw,nosuid,nodev,uid=1000,gid=1000,size=512m
+      - /home/node/.npm:rw,exec,nosuid,nodev,uid=1000,gid=1000,size=512m
+      - /home/node/.openclaw/plugin-runtime-deps:rw,exec,nosuid,nodev,uid=1000,gid=1000,size=2g
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    mem_limit: 2g
+    cpus: 2.0
+    stdin_open: true
+    tty: true
+    depends_on:
+      openclaw-gateway:
+        condition: service_healthy
+
+networks:
+  openclaw_internal:
+    driver: bridge
+    internal: false

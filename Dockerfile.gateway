@@ -1,0 +1,10 @@
+ARG OPENCLAW_BASE_IMAGE=ghcr.io/phioranex/openclaw-docker:latest
+
+FROM docker:27-cli AS docker_cli
+
+FROM ${OPENCLAW_BASE_IMAGE}
+
+USER root
+COPY --from=docker_cli /usr/local/bin/docker /usr/local/bin/docker
+RUN docker --version
+USER node

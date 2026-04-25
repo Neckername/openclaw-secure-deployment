@@ -1,0 +1,61 @@
+{
+  "plugins": {
+    "entries": {
+      "codex": {
+        "enabled": true
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": "codex/gpt-5.4",
+      "embeddedHarness": {
+        "runtime": "codex",
+        "fallback": "none"
+      },
+      "sandbox": {
+        "mode": "all",
+        "backend": "docker",
+        "scope": "session",
+        "workspaceAccess": "none",
+        "docker": {
+          "network": "none"
+        }
+      }
+    }
+  },
+  "tools": {
+    "profile": "coding",
+    "deny": [
+      "group:automation",
+      "group:nodes",
+      "group:messaging"
+    ],
+    "sandbox": {
+      "tools": {
+        "allow": [
+          "group:runtime",
+          "group:fs",
+          "group:web",
+          "group:sessions",
+          "group:memory",
+          "group:ui",
+          "group:media"
+        ],
+        "deny": [
+          "gateway",
+          "cron",
+          "nodes",
+          "message"
+        ]
+      }
+    },
+    "elevated": {
+      "enabled": false
+    }
+  },
+  "commands": {
+    "plugins": false
+  }
+}
+

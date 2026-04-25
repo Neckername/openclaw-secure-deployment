@@ -1,0 +1,59 @@
+# Optional overlay for Docker-backed OpenClaw agent sandboxes without exposing
+# the host Docker socket to the OpenClaw gateway. The sidecar daemon is
+# privileged inside Docker's Linux VM, so treat it as a contained blast-radius
+# boundary rather than a perfect isolation boundary.
+services:
+  openclaw-gateway:
+    image: ${OPENCLAW_SANDBOX_GATEWAY_IMAGE:-openclaw-gateway-secure:latest}
+    environment:
+      DOCKER_HOST: tcp://openclaw-sandbox-docker:2375
+      OPENCLAW_SANDBOX: "1"
+    depends_on:
+      openclaw-sandbox-docker:
+        condition: service_healthy
+    networks:
+      - openclaw_internal
+      - openclaw_sandbox_control
+
+  openclaw-cli:
+    image: ${OPENCLAW_SANDBOX_GATEWAY_IMAGE:-openclaw-gateway-secure:latest}
+    environment:
+      DOCKER_HOST: tcp://openclaw-sandbox-docker:2375
+
+  openclaw-sandbox-docker:
+    image: docker:27-dind
+    container_name: openclaw-sandbox-docker
+    privileged: true
+    restart: unless-stopped
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    command:
+      - dockerd-entrypoint.sh
+      - --host=tcp://0.0.0.0:2375
+      - --host=unix:///var/run/docker.sock
+      - --icc=false
+      - --userland-proxy=false
+      - --dns=1.1.1.1
+      - --dns=8.8.8.8
+    volumes:
+      - openclaw_sandbox_docker:/var/lib/docker
+    networks:
+      - openclaw_internal
+      - openclaw_sandbox_control
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+networks:
+  openclaw_sandbox_control:
+    driver: bridge
+    internal: true
+
+volumes:
+  openclaw_sandbox_docker:
