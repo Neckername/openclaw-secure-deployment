@@ -1,0 +1,41 @@
+{
+  "enforcement": "report_only",
+  "categories": {
+    "fix_now": {
+      "description": "High or critical findings with a fixed version available. Report for human review and remediation planning."
+    },
+    "monitor": {
+      "description": "Findings that need exposure review or vendor tracking, especially when no fixed version is available."
+    },
+    "upstream": {
+      "description": "Findings inherited from the upstream or base image where this repository does not own the vulnerable package directly."
+    },
+    "hygiene": {
+      "description": "Static analysis findings that improve script maintainability or portability but are not treated as exploitable vulnerabilities by default."
+    }
+  },
+  "matchers": {
+    "upstream_path_patterns": [
+      "my-organization/my-app",
+      "usr/local/*",
+      "lib/*",
+      "usr/lib/*"
+    ]
+  },
+  "psscriptanalyzer": {
+    "hygiene_rules": [
+      "PSAvoidUsingWriteHost",
+      "PSUseDeclaredVarsMoreThanAssignments",
+      "PSUseSingularNouns",
+      "PSUseShouldProcessForStateChangingFunctions"
+    ],
+    "risk_rules": [
+      "PSAvoidUsingInvokeExpression",
+      "PSAvoidUsingPlainTextForPassword",
+      "PSAvoidUsingConvertToSecureStringWithPlainText",
+      "PSAvoidGlobalVars",
+      "PSAvoidAssignmentToAutomaticVariable",
+      "PSAvoidUsingEmptyCatchBlock"
+    ]
+  }
+}

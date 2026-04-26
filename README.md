@@ -121,6 +121,18 @@ Register a daily audit:
 The audit checks Compose validation, runtime hardening controls, loopback-only gateway port publishing, disabled local-only plugins, paired-device residue warnings, whether the host Docker socket is mounted, health status, image pinning, and Docker Scout or Trivy image CVEs when available.
 With `-UseSandboxOverlay`, the audit also checks that the DinD sidecar has no host port bindings, is not attached to `openclaw_internal`, rejects unauthenticated `2375`, and that the gateway Docker client uses TLS on `2376`.
 
+## Code Scanning Triage
+
+GitHub code scanning is handled in report-only mode. Trivy and PSScriptAnalyzer SARIF uploads remain visible in the Security tab, but workflow jobs generate triage artifacts instead of failing CI or dismissing alerts automatically.
+
+Generate a local triage report when GitHub CLI is authenticated:
+
+```powershell
+.\scripts\Analyze-CodeScanningAlerts.ps1 -Repository Neckername/openclaw-secure-deployment
+```
+
+The triage policy lives in `security/triage-policy.json` and groups findings into `fix_now`, `monitor`, `upstream`, and `hygiene`. Reports are written under `reports/`, which is ignored by git.
+
 ## Source Notes
 
 - The Phioranex OpenClaw Docker repo provides the ready-made container image and installer flow; this deployment uses the image, not the one-line installer, so we can keep local hardening controls in source.

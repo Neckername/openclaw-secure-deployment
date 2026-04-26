@@ -33,6 +33,7 @@ jobs:
 
       - name: Run PSScriptAnalyzer
         uses: microsoft/psscriptanalyzer-action@v1.1
+        continue-on-error: true
         with:
           # Using forward slash for Ubuntu runner compatibility
           path: ./
@@ -40,7 +41,32 @@ jobs:
           # Removed includeRule to run all security and best-practice checks
           output: results.sarif
 
+      - name: Generate report-only security triage
+        if: always()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./scripts/Analyze-CodeScanningAlerts.ps1 `
+            -Repository $env:GITHUB_REPOSITORY `
+            -PSScriptAnalyzerSarifPath results.sarif `
+            -OutputMarkdown reports/security-triage-powershell.md `
+            -OutputJson reports/security-triage-powershell.json
+          Get-Content reports/security-triage-powershell.md | Add-Content $env:GITHUB_STEP_SUMMARY
+
       - name: Upload SARIF results file
+        if: always() && hashFiles('results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: results.sarif
+
+      - name: Upload report-only PSScriptAnalyzer artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: powershell-report-only-security-triage
+          path: |
+            results.sarif
+            reports/security-triage-powershell.md
+            reports/security-triage-powershell.json
+          if-no-files-found: warn

@@ -35,6 +35,7 @@ jobs:
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@7b7aa264d83dc58691451798b4d117d53d21edfe
+        continue-on-error: true
         with:
           image-ref: 'docker.io/my-organization/my-app:${{ github.sha }}'
           format: 'template'
@@ -43,8 +44,60 @@ jobs:
           severity: 'CRITICAL,HIGH'
           timeout: '15m'  # Increase timeout from default 5m to 15m
           security-checks: 'vuln'  # Optional: disable secret scanning for faster scans
+          exit-code: '0'
+
+      - name: Run Trivy JSON report
+        uses: aquasecurity/trivy-action@7b7aa264d83dc58691451798b4d117d53d21edfe
+        continue-on-error: true
+        with:
+          image-ref: 'docker.io/my-organization/my-app:${{ github.sha }}'
+          format: 'json'
+          output: 'trivy-results.json'
+          severity: 'CRITICAL,HIGH'
+          timeout: '15m'
+          security-checks: 'vuln'
+          exit-code: '0'
+
+      - name: Run Trivy SBOM report
+        uses: aquasecurity/trivy-action@7b7aa264d83dc58691451798b4d117d53d21edfe
+        continue-on-error: true
+        with:
+          image-ref: 'docker.io/my-organization/my-app:${{ github.sha }}'
+          format: 'cyclonedx'
+          output: 'trivy-sbom.cdx.json'
+          timeout: '15m'
+          security-checks: 'vuln'
+          exit-code: '0'
+
+      - name: Generate report-only security triage
+        if: always()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./scripts/Analyze-CodeScanningAlerts.ps1 `
+            -Repository $env:GITHUB_REPOSITORY `
+            -TrivyJsonPath trivy-results.json `
+            -TrivySarifPath trivy-results.sarif `
+            -OutputMarkdown reports/security-triage-trivy.md `
+            -OutputJson reports/security-triage-trivy.json
+          Get-Content reports/security-triage-trivy.md | Add-Content $env:GITHUB_STEP_SUMMARY
 
       - name: Upload Trivy scan results to GitHub Security tab
+        if: always() && hashFiles('trivy-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-results.sarif'
+
+      - name: Upload report-only Trivy artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report-only-security-triage
+          path: |
+            trivy-results.sarif
+            trivy-results.json
+            trivy-sbom.cdx.json
+            reports/security-triage-trivy.md
+            reports/security-triage-trivy.json
+          if-no-files-found: warn
