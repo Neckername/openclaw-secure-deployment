@@ -12,6 +12,7 @@ if ($UseSandboxOverlay) {
 
 $deny = @("group:automation", "group:nodes")
 $sandboxDeny = @("gateway", "cron", "nodes")
+$localOnlyDisabledPlugins = @("bonjour", "device-pair", "phone-control", "talk-voice")
 if (-not $AllowMessaging) {
     $deny += "group:messaging"
     $sandboxDeny += "message"
@@ -34,6 +35,9 @@ $batch = @(
     @{ path = "tools.elevated.enabled"; value = $false },
     @{ path = "commands.plugins"; value = $false }
 )
+foreach ($plugin in $localOnlyDisabledPlugins) {
+    $batch += @{ path = "plugins.entries.$plugin.enabled"; value = $false }
+}
 
 $batchPath = Join-Path $Root "runtime\config\config-set.batch.json"
 $batch | ConvertTo-Json -Depth 8 | Set-Content -Path $batchPath -Encoding ascii

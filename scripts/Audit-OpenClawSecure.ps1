@@ -1,5 +1,6 @@
 param(
-    [switch]$UseSandboxOverlay
+    [switch]$UseSandboxOverlay,
+    [int]$ScanTimeoutSeconds = 120
 )
 
 $ErrorActionPreference = "Continue"
@@ -14,6 +15,9 @@ if ($UseSandboxOverlay) {
     $composeArgs += @("-f", (Join-Path $Root "compose.sandbox-dind.yaml"))
 }
 $envFile = Join-Path $Root ".env"
+$runtimeConfigPath = Join-Path $Root "runtime\config\openclaw.json"
+$pairedDevicesPath = Join-Path $Root "runtime\config\devices\paired.json"
+$localOnlyDisabledPlugins = @("bonjour", "device-pair", "phone-control", "talk-voice")
 
 function Get-DotEnvValue {
     param(
@@ -41,6 +45,10 @@ function Add-Fail {
     $script:failureCount++
     Add-Line "- FAIL: $Message"
 }
+function Add-Warn {
+    param([string]$Message)
+    Add-Line "- WARN: $Message"
+}
 function Test-EnvValue {
     param(
         [object[]]$Env,
@@ -48,6 +56,49 @@ function Test-EnvValue {
         [string]$Value
     )
     return ($Env -contains "$Name=$Value")
+}
+function Test-LoopbackPortBindings {
+    param([object]$PortBindings)
+    $badBindings = @()
+    $hasBindings = $false
+    if ($PortBindings) {
+        foreach ($port in $PortBindings.PSObject.Properties) {
+            foreach ($binding in @($port.Value)) {
+                if (-not $binding) { continue }
+                $hasBindings = $true
+                $hostIp = [string]$binding.HostIp
+                if ($hostIp -ne "127.0.0.1" -and $hostIp -ne "::1") {
+                    $badBindings += ("{0} -> {1}:{2}" -f $port.Name, $hostIp, $binding.HostPort)
+                }
+            }
+        }
+    }
+    return [pscustomobject]@{
+        HasBindings = $hasBindings
+        IsLoopbackOnly = ($badBindings.Count -eq 0)
+        BadBindings = $badBindings
+    }
+}
+function Get-PluginEnabledValue {
+    param(
+        [object]$Config,
+        [string]$Plugin
+    )
+    if (-not $Config -or -not $Config.plugins -or -not $Config.plugins.entries) { return $null }
+    $entryProperty = $Config.plugins.entries.PSObject.Properties[$Plugin]
+    if (-not $entryProperty) { return $null }
+    $enabledProperty = $entryProperty.Value.PSObject.Properties["enabled"]
+    if (-not $enabledProperty) { return $null }
+    return [bool]$enabledProperty.Value
+}
+function Get-JsonCollectionCount {
+    param([object]$Value)
+    if ($null -eq $Value) { return 0 }
+    if ($Value -is [array]) { return $Value.Count }
+    if ($Value -is [System.Management.Automation.PSCustomObject]) {
+        return @($Value.PSObject.Properties).Count
+    }
+    return 1
 }
 function Invoke-NativeWithTimeout {
     param(
@@ -153,8 +204,79 @@ if ($gatewayInspectAvailable) {
         Add-Pass "Host Docker socket is not mounted into the gateway."
     }
     Add-Line "- Port bindings: $($portBindings | ConvertTo-Json -Compress)"
+    $gatewayPortCheck = Test-LoopbackPortBindings -PortBindings $portBindings
+    if ($gatewayPortCheck.IsLoopbackOnly -and $gatewayPortCheck.HasBindings) {
+        Add-Pass "Gateway host port bindings are loopback-only."
+    } elseif ($gatewayPortCheck.IsLoopbackOnly) {
+        Add-Warn "Gateway has no host port bindings; local browser access may not work."
+    } else {
+        Add-Fail "Gateway has non-loopback host port bindings: $($gatewayPortCheck.BadBindings -join ', ')."
+    }
 } else {
     Add-Line "- WARN: Gateway container is not present; start it before runtime inspection."
+}
+
+Add-Line ""
+Add-Line "## Local-Only Plugin Controls"
+Add-Line ""
+$effectiveConfig = $null
+if (Test-Path $runtimeConfigPath) {
+    try {
+        $effectiveConfig = Get-Content -Raw -Path $runtimeConfigPath | ConvertFrom-Json
+    } catch {
+        Add-Fail "Effective OpenClaw config could not be parsed: $($_.Exception.Message)"
+    }
+} else {
+    Add-Warn "Effective OpenClaw config is not present at runtime\config\openclaw.json."
+}
+
+$gatewayLogText = ""
+$latestReadyPluginLine = $null
+if ($gatewayInspectAvailable) {
+    $startedAt = $inspect[0].State.StartedAt
+    $gatewayLogs = docker logs --since $startedAt openclaw-gateway-secure 2>&1
+    $gatewayLogText = ($gatewayLogs -join "`n")
+    $latestReadyPluginLine = @($gatewayLogs | Where-Object { $_ -match "ready \(\d+ plugins:" } | Select-Object -Last 1)
+}
+
+foreach ($plugin in $localOnlyDisabledPlugins) {
+    $enabled = Get-PluginEnabledValue -Config $effectiveConfig -Plugin $plugin
+    if ($enabled -eq $true) {
+        Add-Fail "Local-only profile plugin '$plugin' is enabled in effective config."
+    } elseif ($enabled -eq $false) {
+        Add-Pass "Local-only profile plugin '$plugin' is explicitly disabled."
+    } else {
+        Add-Warn "Local-only profile plugin '$plugin' is not explicitly present in effective config."
+    }
+
+    if ($latestReadyPluginLine -and $latestReadyPluginLine -match ("(?i)\b" + [regex]::Escape($plugin) + "\b")) {
+        Add-Fail "Local-only profile plugin '$plugin' appears in the latest gateway ready plugin list."
+    }
+}
+if (-not $gatewayInspectAvailable) {
+    Add-Warn "Gateway logs were not inspected because the gateway container is not present."
+} elseif (-not $latestReadyPluginLine) {
+    Add-Warn "No gateway ready plugin list was found in current container logs."
+}
+
+if (Test-Path $pairedDevicesPath) {
+    try {
+        $pairedRaw = (Get-Content -Raw -Path $pairedDevicesPath).Trim()
+        if ($pairedRaw -and $pairedRaw -ne "{}" -and $pairedRaw -ne "[]") {
+            $pairedCount = Get-JsonCollectionCount -Value ($pairedRaw | ConvertFrom-Json)
+            if ($pairedCount -gt 0) {
+                Add-Warn "Found $pairedCount paired device record(s). Local-only plugin disabling should make these inert; clear runtime\config\devices\paired.json deliberately if they are no longer needed."
+            } else {
+                Add-Pass "No paired device records are present."
+            }
+        } else {
+            Add-Pass "No paired device records are present."
+        }
+    } catch {
+        Add-Warn "Paired device file exists but could not be parsed."
+    }
+} else {
+    Add-Pass "No paired device file is present."
 }
 
 if ($UseSandboxOverlay) {
@@ -223,6 +345,13 @@ if ($UseSandboxOverlay) {
         } else {
             Add-Fail "Sandbox Docker daemon is not attached to the private control network."
         }
+
+        $probe2375 = docker compose @composeArgs run --rm --entrypoint sh openclaw-cli -c "DOCKER_TLS_VERIFY= DOCKER_CERT_PATH= docker -H tcp://docker:2375 version" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Add-Fail "Unauthenticated Docker API on tcp://docker:2375 is reachable from the gateway network."
+        } else {
+            Add-Pass "Unauthenticated Docker API on tcp://docker:2375 is not reachable from the gateway network."
+        }
     } else {
         Add-Line "- WARN: Sandbox Docker daemon container is not present; start it before runtime inspection."
     }
@@ -246,6 +375,12 @@ if ($UseSandboxOverlay) {
             Add-Pass "Gateway Docker client uses TLS on 2376 with read-only client certs."
         } else {
             Add-Fail "Gateway Docker client is not fully configured for TLS on 2376."
+        }
+        $probe2376 = docker compose @composeArgs run --rm --entrypoint docker openclaw-cli info 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Add-Pass "Gateway Docker client can reach the sandbox daemon over authenticated TLS on 2376."
+        } else {
+            Add-Fail "Gateway Docker client could not reach the sandbox daemon over authenticated TLS on 2376."
         }
     } else {
         Add-Line "- WARN: Gateway container is not present; cannot inspect Docker client TLS settings."
@@ -275,22 +410,29 @@ Add-Line ""
 $image = "ghcr.io/phioranex/openclaw-docker:latest"
 $envImage = Get-DotEnvValue -Path $envFile -Name "OPENCLAW_IMAGE"
 if ($envImage) { $image = $envImage }
+if ($image -match "@sha256:") {
+    Add-Pass "OPENCLAW_IMAGE is pinned by digest."
+} elseif ($image -match ":latest$") {
+    Add-Warn "OPENCLAW_IMAGE uses a moving latest tag; pin to a reviewed tag or digest for repeatable deployments."
+} else {
+    Add-Pass "OPENCLAW_IMAGE is set to an explicit non-latest tag."
+}
 
 $scoutVersion = docker scout version 2>$null
 if ($LASTEXITCODE -eq 0) {
-    $scanResult = Invoke-NativeWithTimeout -FilePath "docker" -Arguments @("scout", "cves", "--platform", "linux/amd64", "--only-severity", "critical,high", $image) -TimeoutSeconds 60
-    Add-Line "- Docker Scout scan attempted for ``$image``."
+    $scanResult = Invoke-NativeWithTimeout -FilePath "docker" -Arguments @("scout", "cves", "--platform", "linux/amd64", "--only-severity", "critical,high", $image) -TimeoutSeconds $ScanTimeoutSeconds
+    Add-Line "- Docker Scout scan attempted for ``$image`` with timeout ${ScanTimeoutSeconds}s."
     if (-not $scanResult.Completed) {
-        Add-Line "- WARN: Docker Scout scan timed out after 60 seconds."
+        Add-Warn "Docker Scout scan timed out after ${ScanTimeoutSeconds}s; rerun with a larger -ScanTimeoutSeconds value or scan manually."
     }
     Add-Line '```text'
     Add-Line ($scanResult.Output -join "`n")
     Add-Line '```'
 } elseif (Get-Command trivy -ErrorAction SilentlyContinue) {
-    $scanResult = Invoke-NativeWithTimeout -FilePath "trivy" -Arguments @("image", "--severity", "CRITICAL,HIGH", $image) -TimeoutSeconds 60
-    Add-Line "- Trivy scan attempted for ``$image``."
+    $scanResult = Invoke-NativeWithTimeout -FilePath "trivy" -Arguments @("image", "--severity", "CRITICAL,HIGH", $image) -TimeoutSeconds $ScanTimeoutSeconds
+    Add-Line "- Trivy scan attempted for ``$image`` with timeout ${ScanTimeoutSeconds}s."
     if (-not $scanResult.Completed) {
-        Add-Line "- WARN: Trivy scan timed out after 60 seconds."
+        Add-Warn "Trivy scan timed out after ${ScanTimeoutSeconds}s; rerun with a larger -ScanTimeoutSeconds value or scan manually."
     }
     Add-Line '```text'
     Add-Line ($scanResult.Output -join "`n")

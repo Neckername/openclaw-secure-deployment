@@ -3,6 +3,18 @@
     "entries": {
       "codex": {
         "enabled": true
+      },
+      "bonjour": {
+        "enabled": false
+      },
+      "device-pair": {
+        "enabled": false
+      },
+      "phone-control": {
+        "enabled": false
+      },
+      "talk-voice": {
+        "enabled": false
       }
     }
   },
@@ -58,4 +70,3 @@
     "plugins": false
   }
 }
-

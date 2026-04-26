@@ -9,7 +9,7 @@ This repository keeps OpenClaw out of the host environment. The baseline deploym
 - The gateway and CLI run as uid `1000`, with `cap_drop: ALL`, `no-new-privileges`, read-only root filesystem, `tmpfs` for writable scratch paths, and CPU, memory, and process limits.
 - The host Docker socket is not mounted into the gateway in the default deployment.
 - The optional sandbox overlay uses a private Docker-in-Docker sidecar so OpenClaw can create agent sandbox containers without receiving the host Docker socket. The sidecar Docker API uses mutual TLS on `2376`, shares only client certificates with the gateway, and is reachable only on the private sandbox control network through the `docker` DNS alias used by Docker's generated TLS certificate.
-- The secure OpenClaw config enables the bundled Codex plugin, forces the Codex harness for `codex/*` models, sandboxes all agent tool execution, disables elevated exec, and denies automation, node-control, and messaging tools by default.
+- The secure OpenClaw config targets local Codex-only use: it enables the bundled Codex plugin, disables LAN/device-oriented plugins, forces the Codex harness for `codex/*` models, sandboxes all agent tool execution, disables elevated exec, and denies automation, node-control, and messaging tools by default.
 - External OpenClaw plugin installation is disabled from chat commands by default. Install plugins deliberately from the CLI after review.
 
 ## Files
@@ -71,7 +71,7 @@ The sandbox daemon intentionally remains `privileged: true` because Docker-in-Do
 .\scripts\Install-OpenClawSecure.ps1 -WithSandbox
 ```
 
-After onboarding, apply the secure OpenClaw policy:
+After onboarding, apply the secure local-only OpenClaw policy:
 
 ```powershell
 .\scripts\Apply-OpenClawSecureConfig.ps1 -UseSandboxOverlay
@@ -91,9 +91,11 @@ docker compose -f compose.yaml -f compose.sandbox-dind.yaml run --rm --entrypoin
 
 The Docker-in-Docker logs may still include benign startup messages about missing `/proc/net/ip6_tables_names`, missing `/proc/net/arp_tables_names`, unsupported snapshotters such as `aufs` or `zfs`, or tracing/NRI plugins being disabled. Those are expected in this containerized daemon. Warnings about unauthenticated access on `2375` are not expected; the TLS overlay fixes those by using authenticated `2376` instead of suppressing the warning.
 
+A Docker-in-Docker warning such as `error locating sandbox id ... not found` is usually stale runtime state from a previous sandbox/container after restart. Treat it as operational noise unless it repeats with failed health checks, daemon restarts, or sandbox creation failures.
+
 ## Plugin and Skill Access
 
-The baseline enables the bundled `codex` plugin and uses `codex/gpt-5.4`, which routes embedded agent turns through the Codex harness when the Codex app-server/auth requirements are met. OpenClaw plugins and skills remain OpenClaw-managed, but tool execution is constrained by sandbox and tool policy.
+The baseline enables the bundled `codex` plugin and uses `codex/gpt-5.4`, which routes embedded agent turns through the Codex harness when the Codex app-server/auth requirements are met. For local-only use it explicitly disables `bonjour`, `device-pair`, `phone-control`, and `talk-voice`. OpenClaw plugins and skills remain OpenClaw-managed, but tool execution is constrained by sandbox and tool policy.
 
 For additional plugins:
 
@@ -116,8 +118,8 @@ Register a daily audit:
 .\scripts\Register-OpenClawAuditTask.ps1 -UseSandboxOverlay
 ```
 
-The audit checks Compose validation, runtime hardening controls, whether the host Docker socket is mounted, health status, and Docker Scout or Trivy image CVEs when available.
-With `-UseSandboxOverlay`, the audit also checks that the DinD sidecar has no host port bindings, is not attached to `openclaw_internal`, avoids unauthenticated `2375`, and that the gateway Docker client uses TLS on `2376`.
+The audit checks Compose validation, runtime hardening controls, loopback-only gateway port publishing, disabled local-only plugins, paired-device residue warnings, whether the host Docker socket is mounted, health status, image pinning, and Docker Scout or Trivy image CVEs when available.
+With `-UseSandboxOverlay`, the audit also checks that the DinD sidecar has no host port bindings, is not attached to `openclaw_internal`, rejects unauthenticated `2375`, and that the gateway Docker client uses TLS on `2376`.
 
 ## Source Notes
 
